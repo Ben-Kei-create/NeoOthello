@@ -1,22 +1,28 @@
 import Foundation
+import SwiftUI // Color用にインポート
 
-// MARK: - Enums
+// MARK: - Game Enums
 
 enum GameMode: String, CaseIterable {
     case classic = "Classic"
     case rogue = "Rogue"
 }
 
-enum DiscType: String, CaseIterable {
-    case normal = "Normal"
-    case hacked = "Hacked"
-    case bomb = "Bomb"
+enum TurnPhase {
+    case startTurn
+    case draw
+    case selectHand
+    case place
+    case effect
+    case endTurn
 }
 
-enum DiscColor: Equatable {
-    case none
-    case black
-    case white
+// MARK: - Disc Color
+
+enum DiscColor: Int {
+    case black = 1
+    case white = 2
+    case none = 0
 
     var opponent: DiscColor {
         switch self {
@@ -33,56 +39,35 @@ enum DiscColor: Equatable {
         case .none: return "None"
         }
     }
+
+    // 3D表示用の色
+    var uiColor: UIColor {
+        switch self {
+        case .black: return .black
+        case .white: return .white
+        case .none: return .clear
+        }
+    }
 }
 
-enum TurnPhase {
-    case startTurn
-    case draw
-    case selectHand
-    case place
-    case effect
-    case endTurn
+// MARK: - Disc Type & Data
+
+enum DiscType {
+    case normal
+    case bomb    // 周囲破壊
+    case hacked  // 乗っ取り
+
+    var label: String {
+        switch self {
+        case .normal: return "Normal"
+        case .bomb: return "Bomb"
+        case .hacked: return "Hacked"
+        }
+    }
 }
 
-// MARK: - DiscData
-
-struct DiscData: Identifiable, Equatable {
-    let id: UUID
-    var type: DiscType
+struct Disc {
     var color: DiscColor
-
-    init(type: DiscType = .normal, color: DiscColor = .none) {
-        self.id = UUID()
-        self.type = type
-        self.color = color
-    }
-
-    static func == (lhs: DiscData, rhs: DiscData) -> Bool {
-        lhs.id == rhs.id
-    }
-}
-
-// MARK: - BoardCell
-
-struct BoardCell {
-    let row: Int
-    let col: Int
-    var color: DiscColor = .none
-    var placedType: DiscType = .normal
-
-    var isEmpty: Bool { color == .none }
-
-    mutating func place(color: DiscColor, type: DiscType = .normal) {
-        self.color = color
-        self.placedType = type
-    }
-
-    mutating func flip() {
-        color = color.opponent
-    }
-
-    mutating func clear() {
-        color = .none
-        placedType = .normal
-    }
+    var type: DiscType = .normal
+    var id: UUID = UUID() // アニメーション識別用
 }

@@ -106,6 +106,7 @@ class GameScene: SCNScene {
         cylinder.materials = [material]
 
         let discNode = SCNNode(geometry: cylinder)
+        discNode.name = "disc_\(x)_\(y)" // ★名前を追加！これで後で検索できる
 
         // 開始位置：盤面の少し上
         let targetY: Float = 0.15 + 0.075 // 盤面(0.1) + 石の半分の高さ
@@ -119,5 +120,39 @@ class GameScene: SCNScene {
 
         discNode.runAction(fallAction)
         boardNode.addChildNode(discNode)
+    }
+
+    // MARK: - Game Logic Updates
+
+    /// 指定した座標の石の色を変える（ひっくり返す）
+    func flipDisc(at x: Int, _ y: Int, to color: UIColor) {
+        // ノード名で既存の石を検索
+        let discName = "disc_\(x)_\(y)"
+        if let existingDisc = boardNode.childNode(withName: discName, recursively: false) {
+
+            // 回転アニメーション（ジャンプ → 回転 → 色変更 → 着地）
+            let jumpUp = SCNAction.moveBy(x: 0, y: 0.5, z: 0, duration: 0.1)
+            let flip = SCNAction.rotate(by: .pi, around: SCNVector3(1, 0, 0), duration: 0.2)
+            let jumpDown = SCNAction.moveBy(x: 0, y: -0.5, z: 0, duration: 0.1)
+            let changeColor = SCNAction.run { node in
+                node.geometry?.firstMaterial?.diffuse.contents = color
+            }
+
+            let sequence = SCNAction.sequence([jumpUp, flip, changeColor, jumpDown])
+            existingDisc.runAction(sequence)
+
+        } else {
+            // 見つからなければ置く（初期配置用のフォールバック）
+            placeDisc(at: x, y, color: color)
+        }
+    }
+
+    /// 盤面のリセット（石だけ削除、セルは残す）
+    func resetBoard() {
+        boardNode.childNodes.forEach { node in
+            if node.name?.starts(with: "disc_") == true {
+                node.removeFromParentNode()
+            }
+        }
     }
 }

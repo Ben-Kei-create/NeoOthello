@@ -167,7 +167,7 @@ struct GameOverlayView: View {
             )
     }
 
-    private func discSlotView(disc: DiscData, index: Int) -> some View {
+    private func discSlotView(disc: Disc, index: Int) -> some View {
         let isSelectable = viewModel.isWaitingForHandSelection
             && viewModel.currentPhase == .selectHand
 
@@ -183,7 +183,7 @@ struct GameOverlayView: View {
                     VStack(spacing: 2) {
                         discIcon(type: disc.type)
                             .font(.system(size: 20))
-                        Text(disc.type.rawValue)
+                        Text(disc.type.label)
                             .font(.system(size: 9, weight: .bold, design: .monospaced))
                     }
                     .foregroundColor(.white)

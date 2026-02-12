@@ -15,7 +15,7 @@ final class GameViewModel: ObservableObject {
     @Published var whiteHand: Hand = Hand(ownerColor: .white)
     @Published var deck: Deck = Deck()
     @Published var selectedDiscIndex: Int? = nil
-    @Published var selectedDisc: DiscData? = nil
+    @Published var selectedDisc: Disc? = nil
     @Published var message: String = ""
     @Published var isGameOver: Bool = false
     @Published var winner: DiscColor = .none
@@ -23,19 +23,52 @@ final class GameViewModel: ObservableObject {
     @Published var whiteCount: Int = 2
     @Published var isWaitingForPlacement: Bool = false
     @Published var isWaitingForHandSelection: Bool = false
-    @Published var validMovePositions: [(row: Int, col: Int)] = []
-    @Published var lastPlacedPosition: (row: Int, col: Int)? = nil
+    @Published var validMovePositions: [(x: Int, y: Int)] = []
+    @Published var lastPlacedPosition: (x: Int, y: Int)? = nil
     @Published var bombAffectedCells: [(Int, Int)] = []
-    @Published var hackedForcePosition: (row: Int, col: Int)? = nil
+    @Published var hackedForcePosition: (x: Int, y: Int)? = nil
     @Published var limitBreakTriggered: Bool = false
     @Published var showingTitleScreen: Bool = true
+
+    // MARK: - Board Helpers
+
+    private func validMoves(for color: DiscColor) -> [(x: Int, y: Int)] {
+        var moves: [(Int, Int)] = []
+        for x in 0..<8 {
+            for y in 0..<8 {
+                if board.canPlace(color, at: x, y) {
+                    moves.append((x, y))
+                }
+            }
+        }
+        return moves
+    }
+
+    private var isGameOverCheck: Bool {
+        validMoves(for: .black).isEmpty && validMoves(for: .white).isEmpty
+    }
+
+    private func countDiscs() -> (black: Int, white: Int) {
+        var b = 0, w = 0
+        for x in 0..<8 {
+            for y in 0..<8 {
+                if let disc = board.grid[x][y] {
+                    switch disc.color {
+                    case .black: b += 1
+                    case .white: w += 1
+                    case .none: break
+                    }
+                }
+            }
+        }
+        return (b, w)
+    }
 
     // MARK: - Init & Start
 
     func startGame(mode: GameMode) {
         gameMode = mode
-        board = Board()
-        board.initStandardBoard()
+        board = Board() // Board() already sets up initial state
         currentPlayer = .black
         isGameOver = false
         winner = .none
@@ -65,9 +98,9 @@ final class GameViewModel: ObservableObject {
     private func beginTurn() {
         guard !isGameOver else { return }
 
-        let moves = board.validMoves(for: currentPlayer)
+        let moves = validMoves(for: currentPlayer)
         if moves.isEmpty {
-            let opponentMoves = board.validMoves(for: currentPlayer.opponent)
+            let opponentMoves = validMoves(for: currentPlayer.opponent)
             if opponentMoves.isEmpty {
                 endGame()
                 return
@@ -88,7 +121,7 @@ final class GameViewModel: ObservableObject {
         if gameMode == .rogue {
             drawPhase()
         } else {
-            selectedDisc = DiscData(type: .normal, color: currentPlayer)
+            selectedDisc = Disc(color: currentPlayer, type: .normal)
             enterPlacePhase()
         }
     }
@@ -116,7 +149,7 @@ final class GameViewModel: ObservableObject {
 
         let hand = currentHand
         if hand.count == 0 {
-            selectedDisc = DiscData(type: .normal, color: currentPlayer)
+            selectedDisc = Disc(color: currentPlayer, type: .normal)
             enterPlacePhase()
             return
         }
@@ -162,7 +195,7 @@ final class GameViewModel: ObservableObject {
 
     private func enterPlacePhase() {
         currentPhase = .place
-        validMovePositions = board.validMoves(for: currentPlayer)
+        validMovePositions = validMoves(for: currentPlayer)
 
         let isHacked = selectedDisc?.type == .hacked
 
@@ -176,23 +209,22 @@ final class GameViewModel: ObservableObject {
     }
 
     /// Called when player taps a board cell.
-    func playerPlaceDisc(row: Int, col: Int) {
+    func playerPlaceDisc(x: Int, y: Int) {
         guard isWaitingForPlacement, currentPhase == .place else { return }
-        guard board.isValidMove(row: row, col: col, color: currentPlayer) else { return }
+        guard board.canPlace(currentPlayer, at: x, y) else { return }
 
-        let type = selectedDisc?.type ?? .normal
-        let flipped = board.placeDisc(row: row, col: col, color: currentPlayer, type: type)
-        lastPlacedPosition = (row, col)
+        let flipped = board.place(currentPlayer, at: x, y)
+        lastPlacedPosition = (x, y)
         isWaitingForPlacement = false
         validMovePositions = []
 
         updateCounts()
 
         if gameMode == .rogue {
-            checkLimitBreak(flippedCount: flipped)
+            checkLimitBreak(flippedCount: flipped?.count ?? 0)
         }
 
-        afterPlacement(row: row, col: col)
+        afterPlacement(x: x, y: y)
     }
 
     private func aiPlace() {
@@ -204,18 +236,16 @@ final class GameViewModel: ObservableObject {
                 return
             }
 
-            let type = selectedDisc?.type ?? .normal
-            let flipped = board.placeDisc(row: move.row, col: move.col,
-                                          color: currentPlayer, type: type)
-            lastPlacedPosition = (move.row, move.col)
+            let flipped = board.place(currentPlayer, at: move.x, move.y)
+            lastPlacedPosition = (move.x, move.y)
             validMovePositions = []
             updateCounts()
 
             if gameMode == .rogue {
-                checkLimitBreak(flippedCount: flipped)
+                checkLimitBreak(flippedCount: flipped?.count ?? 0)
             }
 
-            afterPlacement(row: move.row, col: move.col)
+            afterPlacement(x: move.x, y: move.y)
         }
     }
 
@@ -225,13 +255,11 @@ final class GameViewModel: ObservableObject {
         Task {
             try? await Task.sleep(nanoseconds: 500_000_000)
 
-            let move: (row: Int, col: Int)?
+            let move: (x: Int, y: Int)?
 
             if currentPlayer == .black {
-                // Player played Hacked → AI picks worst for black
                 move = GameEngine.chooseWorstMoveFor(board: board, victimColor: .black)
             } else {
-                // AI played Hacked → random placement
                 move = GameEngine.chooseRandomMove(board: board, color: .white)
             }
 
@@ -240,36 +268,35 @@ final class GameViewModel: ObservableObject {
                 return
             }
 
-            let flipped = board.placeDisc(row: m.row, col: m.col,
-                                          color: currentPlayer, type: .hacked)
-            lastPlacedPosition = (m.row, m.col)
-            hackedForcePosition = (m.row, m.col)
+            let flipped = board.place(currentPlayer, at: m.x, m.y)
+            lastPlacedPosition = (m.x, m.y)
+            hackedForcePosition = (m.x, m.y)
             validMovePositions = []
             updateCounts()
 
-            message = "Forced placement at (\(m.row), \(m.col))!"
+            message = "Forced placement at (\(m.x), \(m.y))!"
 
-            afterPlacement(row: m.row, col: m.col)
+            afterPlacement(x: m.x, y: m.y)
         }
     }
 
     // MARK: - Effect Phase
 
-    private func afterPlacement(row: Int, col: Int) {
+    private func afterPlacement(x: Int, y: Int) {
         if gameMode == .rogue, let disc = selectedDisc, disc.type == .bomb {
-            effectPhase(row: row, col: col)
+            effectPhase(x: x, y: y)
         } else {
             endTurn()
         }
     }
 
-    private func effectPhase(row: Int, col: Int) {
+    private func effectPhase(x: Int, y: Int) {
         currentPhase = .effect
 
         Task {
             try? await Task.sleep(nanoseconds: 300_000_000)
 
-            let affected = GameEngine.resolveBomb(board: &board, row: row, col: col,
+            let affected = GameEngine.resolveBomb(board: &board, x: x, y: y,
                                                   placerColor: currentPlayer)
             if !affected.isEmpty {
                 bombAffectedCells = affected
@@ -319,9 +346,9 @@ final class GameViewModel: ObservableObject {
         selectedDiscIndex = nil
         hackedForcePosition = nil
 
-        if board.isGameOver || (gameMode == .rogue && deck.isEmpty
+        if isGameOverCheck || (gameMode == .rogue && deck.isEmpty
             && blackHand.count == 0 && whiteHand.count == 0
-            && board.validMoves(for: currentPlayer.opponent).isEmpty) {
+            && validMoves(for: currentPlayer.opponent).isEmpty) {
             endGame()
             return
         }
@@ -338,7 +365,7 @@ final class GameViewModel: ObservableObject {
 
     private func endGame() {
         isGameOver = true
-        let counts = board.countDiscs()
+        let counts = countDiscs()
         blackCount = counts.black
         whiteCount = counts.white
 
@@ -373,7 +400,7 @@ final class GameViewModel: ObservableObject {
     }
 
     private func updateCounts() {
-        let counts = board.countDiscs()
+        let counts = countDiscs()
         blackCount = counts.black
         whiteCount = counts.white
     }

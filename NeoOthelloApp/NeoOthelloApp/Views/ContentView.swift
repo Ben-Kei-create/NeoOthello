@@ -2,58 +2,93 @@ import SwiftUI
 import SceneKit
 
 struct ContentView: View {
-    // 3Dシーンの実体を保持（Viewが再描画されても消えないように）
-    // ※ 本来はViewModelに持たせますが、まずはテスト動作なのでここでOK
     @State private var scene = GameScene()
+
+    // ゲームの状態管理
+    @State private var board = Board()
+    @State private var currentTurn: DiscColor = .black
 
     var body: some View {
         ZStack {
-            // 背景色（宇宙っぽい黒）
             Color.black.edgesIgnoringSafeArea(.all)
 
-            // 3Dレイヤー
             SceneKitContainer(scene: scene) { nodeName in
                 handleTap(nodeName: nodeName)
             }
             .edgesIgnoringSafeArea(.all)
+            .onAppear {
+                // アプリ起動時に初期配置を描画
+                renderInitialBoard()
+            }
 
-            // UIレイヤー（デバッグ用）
             VStack {
-                Text("Neo Othello Prototype")
-                    .font(.headline)
-                    .padding(8)
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(8)
-                    .foregroundColor(.white)
+                // ターン表示
+                HStack {
+                    Circle()
+                        .fill(currentTurn == .black ? Color.white : Color.clear)
+                        .frame(width: 10, height: 10)
+                    Text(currentTurn == .black ? "Black's Turn" : "White's Turn")
+                        .font(.title2)
+                        .bold()
+                        .foregroundColor(currentTurn == .black ? .white : .gray)
+                }
+                .padding()
+                .background(.ultraThinMaterial)
+                .cornerRadius(20)
+                .padding(.top, 50)
+
                 Spacer()
-                Text("Tap any cell to place a disc")
-                    .font(.caption)
-                    .foregroundColor(.gray)
-                    .padding(.bottom, 20)
             }
         }
     }
 
-    // タップ処理のロジック
+    private func renderInitialBoard() {
+        // Boardモデルの初期状態を見て、3Dシーンに石を置く
+        scene.resetBoard()
+        for x in 0..<8 {
+            for y in 0..<8 {
+                if let disc = board.grid[x][y] {
+                    scene.placeDisc(at: x, y, color: disc.color.uiColor)
+                }
+            }
+        }
+    }
+
     private func handleTap(nodeName: String) {
-        // "cell_3_4" 形式の文字列を分解
         let components = nodeName.split(separator: "_")
+        guard components.count == 3,
+              let x = Int(components[1]),
+              let y = Int(components[2]) else { return }
 
-        // 安全に Int に変換できた場合のみ実行
-        if components.count == 3,
-           let x = Int(components[1]),
-           let y = Int(components[2]) {
+        // 【重要】ロジック判定：置ける場所か？
+        guard board.canPlace(currentTurn, at: x, y) else {
+            print("Invalid Move!")
+            // 「ブブー」というエラー振動
+            let generator = UINotificationFeedbackGenerator()
+            generator.notificationOccurred(.error)
+            return
+        }
 
-            print("Tapped Node: \(nodeName) -> (\(x), \(y))")
+        // ロジック更新：石を置く＆ひっくり返すリストを取得
+        if let flipped = board.place(currentTurn, at: x, y) {
 
-            // UIスレッドで描画更新（アニメーション実行）
-            // テストとして、交互に色を変えたりせず「黒」を落とす
             Task { @MainActor in
-                scene.placeDisc(at: x, y, color: .black)
-
-                // 振動フィードバック（触覚）を入れると気持ちいい
+                // 1. 新しい石を置く
+                scene.placeDisc(at: x, y, color: currentTurn.uiColor)
                 let generator = UIImpactFeedbackGenerator(style: .medium)
                 generator.impactOccurred()
+
+                // 2. 挟んだ石をひっくり返す（少し遅らせると気持ちいい）
+                try? await Task.sleep(nanoseconds: 100_000_000) // 0.1秒待機
+
+                for (fx, fy) in flipped {
+                    scene.flipDisc(at: fx, fy, to: currentTurn.uiColor)
+                }
+
+                // 3. ターン交代
+                currentTurn = currentTurn.opponent
+
+                // ※ 本来はここで「パス」の判定や「ゲーム終了」判定が入ります
             }
         }
     }

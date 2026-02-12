@@ -1,6 +1,7 @@
 import Foundation
 
-/// Core game engine: AI evaluation, turn progression, effect resolution.
+/// Core game engine: AI evaluation and effect resolution.
+/// Used for AI opponent and special disc effects.
 struct GameEngine {
 
     // MARK: - AI Positional Weights
@@ -19,18 +20,19 @@ struct GameEngine {
     // MARK: - AI Move Selection
 
     /// Choose the best move for AI (positional weight + flip count).
-    static func chooseBestMove(board: Board, color: DiscColor) -> (row: Int, col: Int)? {
-        let moves = board.validMoves(for: color)
-        guard !moves.isEmpty else { return nil }
-
-        var bestMove = moves[0]
+    static func chooseBestMove(board: Board, color: DiscColor) -> (x: Int, y: Int)? {
+        var bestMove: (Int, Int)? = nil
         var bestScore = Int.min
 
-        for move in moves {
-            let score = evaluateMove(board: board, row: move.row, col: move.col, color: color)
-            if score > bestScore {
-                bestScore = score
-                bestMove = move
+        for x in 0..<8 {
+            for y in 0..<8 {
+                if board.canPlace(color, at: x, y) {
+                    let score = evaluateMove(board: board, x: x, y: y, color: color)
+                    if score > bestScore {
+                        bestScore = score
+                        bestMove = (x, y)
+                    }
+                }
             }
         }
 
@@ -38,18 +40,19 @@ struct GameEngine {
     }
 
     /// For Hacked disc: choose the worst move for the victim.
-    static func chooseWorstMoveFor(board: Board, victimColor: DiscColor) -> (row: Int, col: Int)? {
-        let moves = board.validMoves(for: victimColor)
-        guard !moves.isEmpty else { return nil }
-
-        var worstMove = moves[0]
+    static func chooseWorstMoveFor(board: Board, victimColor: DiscColor) -> (x: Int, y: Int)? {
+        var worstMove: (Int, Int)? = nil
         var worstScore = Int.max
 
-        for move in moves {
-            let score = evaluateMove(board: board, row: move.row, col: move.col, color: victimColor)
-            if score < worstScore {
-                worstScore = score
-                worstMove = move
+        for x in 0..<8 {
+            for y in 0..<8 {
+                if board.canPlace(victimColor, at: x, y) {
+                    let score = evaluateMove(board: board, x: x, y: y, color: victimColor)
+                    if score < worstScore {
+                        worstScore = score
+                        worstMove = (x, y)
+                    }
+                }
             }
         }
 
@@ -57,9 +60,16 @@ struct GameEngine {
     }
 
     /// Random move (used when AI is victim of Hacked).
-    static func chooseRandomMove(board: Board, color: DiscColor) -> (row: Int, col: Int)? {
-        let moves = board.validMoves(for: color)
-        return moves.isEmpty ? nil : moves.randomElement()
+    static func chooseRandomMove(board: Board, color: DiscColor) -> (x: Int, y: Int)? {
+        var validMoves: [(Int, Int)] = []
+        for x in 0..<8 {
+            for y in 0..<8 {
+                if board.canPlace(color, at: x, y) {
+                    validMoves.append((x, y))
+                }
+            }
+        }
+        return validMoves.randomElement()
     }
 
     /// AI hand disc selection: prefer Normal > Bomb > Hacked.
@@ -84,25 +94,35 @@ struct GameEngine {
         return bestIdx
     }
 
-    private static func evaluateMove(board: Board, row: Int, col: Int, color: DiscColor) -> Int {
-        let flipCount = board.flippableCells(row: row, col: col, color: color).count
-        let posValue = positionWeights[row][col]
+    private static func evaluateMove(board: Board, x: Int, y: Int, color: DiscColor) -> Int {
+        // Count how many would be flipped (using a temporary board)
+        var tempBoard = board
+        let flipped = tempBoard.place(color, at: x, y)
+        let flipCount = flipped?.count ?? 0
+        let posValue = positionWeights[x][y]
         return posValue * 2 + flipCount
     }
 
     // MARK: - Effect Resolution
 
     /// Resolve Bomb effect: destroy adjacent enemy discs. Returns affected positions.
-    static func resolveBomb(board: inout Board, row: Int, col: Int,
+    static func resolveBomb(board: inout Board, x: Int, y: Int,
                             placerColor: DiscColor) -> [(Int, Int)] {
         let enemy = placerColor.opponent
-        let adjacent = board.adjacentCells(row: row, col: col)
+        let directions = [
+            (-1, -1), (-1, 0), (-1, 1),
+            (0, -1),           (0, 1),
+            (1, -1),  (1, 0),  (1, 1)
+        ]
+
         var affected: [(Int, Int)] = []
 
-        for (r, c) in adjacent {
-            if board.cells[r][c].color == enemy {
-                affected.append((r, c))
-                board.destroyCell(row: r, col: c)
+        for (dx, dy) in directions {
+            let nx = x + dx, ny = y + dy
+            guard nx >= 0 && nx < 8 && ny >= 0 && ny < 8 else { continue }
+            if let disc = board.grid[nx][ny], disc.color == enemy {
+                affected.append((nx, ny))
+                board.grid[nx][ny] = nil
             }
         }
 

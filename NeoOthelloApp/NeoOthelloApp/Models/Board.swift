@@ -1,139 +1,85 @@
 import Foundation
 
-/// Pure 8x8 Othello board logic. No UI dependencies.
 struct Board {
-    static let size = 8
-
-    private static let directions: [(dr: Int, dc: Int)] = [
-        (-1, -1), (-1, 0), (-1, 1),
-        ( 0, -1),          ( 0, 1),
-        ( 1, -1), ( 1, 0), ( 1, 1)
-    ]
-
-    private(set) var cells: [[BoardCell]]
+    // 8x8の盤面データ（nilなら空き、入っていれば石）
+    var grid: [[Disc?]]
 
     init() {
-        cells = (0..<Board.size).map { r in
-            (0..<Board.size).map { c in BoardCell(row: r, col: c) }
-        }
+        // 8x8を空で初期化
+        grid = Array(repeating: Array(repeating: nil, count: 8), count: 8)
+        setupInitialState()
     }
 
-    // MARK: - Setup
-
-    mutating func initStandardBoard() {
-        clearBoard()
-        cells[3][3].place(color: .white)
-        cells[3][4].place(color: .black)
-        cells[4][3].place(color: .black)
-        cells[4][4].place(color: .white)
+    // 初期配置（オセロの公式ルール）
+    private mutating func setupInitialState() {
+        grid[3][3] = Disc(color: .white)
+        grid[4][4] = Disc(color: .white)
+        grid[3][4] = Disc(color: .black)
+        grid[4][3] = Disc(color: .black)
     }
 
-    mutating func clearBoard() {
-        for r in 0..<Board.size {
-            for c in 0..<Board.size {
-                cells[r][c].clear()
-            }
-        }
-    }
+    // 石を置く（成功したらひっくり返した座標リストを返す、失敗ならnil）
+    mutating func place(_ color: DiscColor, at x: Int, _ y: Int) -> [(Int, Int)]? {
+        // 既に石がある、または範囲外ならNG
+        guard isValidCoordinate(x, y), grid[x][y] == nil else { return nil }
 
-    // MARK: - Queries
+        let flipped = getFlippableDiscs(color, at: x, y)
 
-    func inBounds(_ row: Int, _ col: Int) -> Bool {
-        row >= 0 && row < Board.size && col >= 0 && col < Board.size
-    }
+        // 1枚もひっくり返せなければ置けない（オセロのルール）
+        if flipped.isEmpty { return nil }
 
-    func cell(at row: Int, _ col: Int) -> BoardCell? {
-        guard inBounds(row, col) else { return nil }
-        return cells[row][col]
-    }
+        // 石を置く
+        grid[x][y] = Disc(color: color)
 
-    /// Returns positions that would be flipped if `color` places at (row, col).
-    func flippableCells(row: Int, col: Int, color: DiscColor) -> [(Int, Int)] {
-        guard inBounds(row, col), cells[row][col].isEmpty else { return [] }
-
-        let opponent = color.opponent
-        var result: [(Int, Int)] = []
-
-        for dir in Board.directions {
-            var line: [(Int, Int)] = []
-            var r = row + dir.dr
-            var c = col + dir.dc
-
-            while inBounds(r, c) && cells[r][c].color == opponent {
-                line.append((r, c))
-                r += dir.dr
-                c += dir.dc
-            }
-
-            if !line.isEmpty && inBounds(r, c) && cells[r][c].color == color {
-                result.append(contentsOf: line)
-            }
+        // ひっくり返す処理
+        for (fx, fy) in flipped {
+            grid[fx][fy]?.color = color
         }
 
-        return result
+        return flipped
     }
 
-    func isValidMove(row: Int, col: Int, color: DiscColor) -> Bool {
-        !flippableCells(row: row, col: col, color: color).isEmpty
+    // 置ける場所かどうかチェック（ハイライト用）
+    func canPlace(_ color: DiscColor, at x: Int, _ y: Int) -> Bool {
+        guard isValidCoordinate(x, y), grid[x][y] == nil else { return false }
+        return !getFlippableDiscs(color, at: x, y).isEmpty
     }
 
-    func validMoves(for color: DiscColor) -> [(row: Int, col: Int)] {
-        var moves: [(Int, Int)] = []
-        for r in 0..<Board.size {
-            for c in 0..<Board.size {
-                if isValidMove(row: r, col: c, color: color) {
-                    moves.append((r, c))
+    // ひっくり返せる石の座標リストを取得
+    private func getFlippableDiscs(_ color: DiscColor, at x: Int, _ y: Int) -> [(Int, Int)] {
+        var flippable: [(Int, Int)] = []
+        let directions = [
+            (-1, -1), (-1, 0), (-1, 1),
+            (0, -1),           (0, 1),
+            (1, -1),  (1, 0),  (1, 1)
+        ]
+
+        for (dx, dy) in directions {
+            var tempFlippable: [(Int, Int)] = []
+            var cx = x + dx
+            var cy = y + dy
+
+            // その方向をスキャン
+            while isValidCoordinate(cx, cy) {
+                guard let disc = grid[cx][cy] else { break } // 空きマスなら終了
+
+                if disc.color == color.opponent {
+                    // 相手の石なら候補に追加して次へ
+                    tempFlippable.append((cx, cy))
+                } else if disc.color == color {
+                    // 自分の石で挟めたら、候補を確定リストに追加
+                    flippable.append(contentsOf: tempFlippable)
+                    break
                 }
+
+                cx += dx
+                cy += dy
             }
         }
-        return moves
+        return flippable
     }
 
-    var isGameOver: Bool {
-        validMoves(for: .black).isEmpty && validMoves(for: .white).isEmpty
-    }
-
-    func countDiscs() -> (black: Int, white: Int) {
-        var b = 0, w = 0
-        for r in 0..<Board.size {
-            for c in 0..<Board.size {
-                switch cells[r][c].color {
-                case .black: b += 1
-                case .white: w += 1
-                case .none: break
-                }
-            }
-        }
-        return (b, w)
-    }
-
-    func adjacentCells(row: Int, col: Int) -> [(Int, Int)] {
-        Board.directions.compactMap { dir in
-            let r = row + dir.dr, c = col + dir.dc
-            return inBounds(r, c) ? (r, c) : nil
-        }
-    }
-
-    // MARK: - Mutations
-
-    /// Place a disc and flip captured pieces. Returns flipped count.
-    @discardableResult
-    mutating func placeDisc(row: Int, col: Int, color: DiscColor,
-                            type: DiscType = .normal) -> Int {
-        let flippable = flippableCells(row: row, col: col, color: color)
-        guard !flippable.isEmpty else { return 0 }
-
-        cells[row][col].place(color: color, type: type)
-
-        for (r, c) in flippable {
-            cells[r][c].flip()
-        }
-
-        return flippable.count
-    }
-
-    mutating func destroyCell(row: Int, col: Int) {
-        guard inBounds(row, col) else { return }
-        cells[row][col].clear()
+    private func isValidCoordinate(_ x: Int, _ y: Int) -> Bool {
+        return x >= 0 && x < 8 && y >= 0 && y < 8
     }
 }
