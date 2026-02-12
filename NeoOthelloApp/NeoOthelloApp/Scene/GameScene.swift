@@ -147,6 +147,31 @@ class GameScene: SCNScene {
         }
     }
 
+    /// ボム爆発パーティクルエフェクト
+    func showExplosion(at x: Int, y: Int) {
+        let particleSystem = SCNParticleSystem()
+        particleSystem.loops = false
+        particleSystem.birthRate = 1000
+        particleSystem.emissionDuration = 0.1
+        particleSystem.particleLifeSpan = 0.5
+        particleSystem.particleSize = 0.05
+        particleSystem.particleColor = .orange
+        particleSystem.emitterShape = SCNSphere(radius: 0.1)
+        particleSystem.spreadingAngle = 180
+
+        let node = SCNNode()
+        node.addParticleSystem(particleSystem)
+        node.position = SCNVector3(x: Float(x), y: 0.2, z: Float(y))
+
+        boardNode.addChildNode(node)
+
+        // 1秒後に掃除
+        node.runAction(SCNAction.sequence([
+            SCNAction.wait(duration: 1.0),
+            SCNAction.removeFromParentNode()
+        ]))
+    }
+
     /// 盤面のリセット（石だけ削除、セルは残す）
     func resetBoard() {
         boardNode.childNodes.forEach { node in

@@ -137,9 +137,16 @@ class GameViewModel: ObservableObject {
                     scene.flipDisc(at: fx, fy, to: color.uiColor)
                 }
 
+                // ひっくり返した枚数（ボムの誘爆も含める）
+                var totalFlippedCount = flipped.count
+
                 // 2. ボム発動！
                 if type == .bomb {
                     try? await Task.sleep(nanoseconds: 200_000_000)
+
+                    // パーティクル爆発エフェクト！
+                    scene.showExplosion(at: x, y: y)
+
                     let exploded = board.explode(at: (x, y), color: color)
 
                     if !exploded.isEmpty {
@@ -153,7 +160,15 @@ class GameViewModel: ObservableObject {
                             try? await Task.sleep(nanoseconds: 100_000_000)
                             scene.flipDisc(at: ex, ey, to: color.uiColor)
                         }
+
+                        // 爆発で巻き込んだ分もカウントに足す！
+                        totalFlippedCount += exploded.count
                     }
+                }
+
+                // 3. 限界突破判定：6枚以上なら手牌拡張！
+                if totalFlippedCount >= 6 {
+                    handleLimitBreak(for: color)
                 }
 
                 // スコア更新
@@ -162,6 +177,24 @@ class GameViewModel: ObservableObject {
                 // ターン終了処理へ
                 endTurn()
             }
+        }
+    }
+
+    // 限界突破の処理
+    private func handleLimitBreak(for color: DiscColor) {
+        if color == .black {
+            playerHand.limitBreak() // capacity +1
+
+            // 即座に1枚ドローして選択肢を増やす！
+            playerHand.refill(from: &deck, owner: .black)
+
+            // 演出
+            message = "LIMIT BREAK! Hand Expanded to \(playerHand.capacity)!"
+            let generator = UINotificationFeedbackGenerator()
+            generator.notificationOccurred(.success)
+        } else {
+            enemyHand.limitBreak()
+            enemyHand.refill(from: &deck, owner: .white)
         }
     }
 
