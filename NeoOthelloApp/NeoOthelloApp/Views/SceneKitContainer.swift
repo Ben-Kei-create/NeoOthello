@@ -1,61 +1,54 @@
 import SwiftUI
 import SceneKit
 
-/// Wraps a SceneKit SCNView for use in SwiftUI with tap gesture support.
 struct SceneKitContainer: UIViewRepresentable {
-    let scene: GameScene
-    let onCellTapped: (Int, Int) -> Void
+    let scene: SCNScene
+    var onTap: (String) -> Void // タップされたノード名を返すクロージャ
 
     func makeUIView(context: Context) -> SCNView {
         let scnView = SCNView()
         scnView.scene = scene
+
+        // 開発用設定（ライトやカメラ操作を許可するか）
         scnView.allowsCameraControl = false
-        scnView.backgroundColor = UIColor(red: 0.12, green: 0.12, blue: 0.15, alpha: 1)
+        scnView.autoenablesDefaultLighting = true
         scnView.antialiasingMode = .multisampling4X
 
-        let tapGesture = UITapGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.handleTap(_:))
-        )
+        // タップジェスチャーの登録
+        let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
         scnView.addGestureRecognizer(tapGesture)
 
         return scnView
     }
 
     func updateUIView(_ uiView: SCNView, context: Context) {
-        // Scene updates are handled via GameScene methods directly
+        // ViewModelから変更があった場合にここでSceneを更新することも可能
+        // 今回はContentViewの.onChangeでSceneを直接叩く設計なので、ここは空でもOK
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(scene: scene, onCellTapped: onCellTapped)
+        Coordinator(self)
     }
 
+    // タップイベントを処理するコーディネーター
     class Coordinator: NSObject {
-        let scene: GameScene
-        let onCellTapped: (Int, Int) -> Void
+        var parent: SceneKitContainer
 
-        init(scene: GameScene, onCellTapped: @escaping (Int, Int) -> Void) {
-            self.scene = scene
-            self.onCellTapped = onCellTapped
+        init(_ parent: SceneKitContainer) {
+            self.parent = parent
         }
 
         @objc func handleTap(_ gesture: UITapGestureRecognizer) {
             guard let scnView = gesture.view as? SCNView else { return }
-            let location = gesture.location(in: scnView)
-            let hitResults = scnView.hitTest(location, options: [
-                .searchMode: SCNHitTestSearchMode.closest.rawValue
-            ])
 
-            for hit in hitResults {
-                // Check the tapped node and its ancestors for a cell name
-                var node: SCNNode? = hit.node
-                while let current = node {
-                    if let name = current.name,
-                       let cell = GameScene.parseCellName(name) {
-                        onCellTapped(cell.row, cell.col)
-                        return
-                    }
-                    node = current.parent
+            let location = gesture.location(in: scnView)
+            // 3D空間へのヒットテスト（ここが重要！）
+            let hitResults = scnView.hitTest(location, options: [.boundingBoxOnly: true])
+
+            if let firstHit = hitResults.first {
+                // ノード名（例: "cell_3_4"）を取得して親に返す
+                if let nodeName = firstHit.node.name {
+                    parent.onTap(nodeName)
                 }
             }
         }

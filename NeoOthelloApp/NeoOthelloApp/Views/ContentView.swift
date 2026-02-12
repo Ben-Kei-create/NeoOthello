@@ -23,8 +23,11 @@ struct ContentView: View {
     private var gameView: some View {
         ZStack {
             // 3D board (SceneKit)
-            SceneKitContainer(scene: gameScene) { row, col in
-                viewModel.playerPlaceDisc(row: row, col: col)
+            SceneKitContainer(scene: gameScene) { nodeName in
+                // ノード名 "cell_3_4" をパースして配置処理へ
+                if let cell = GameScene.parseCellName(nodeName) {
+                    viewModel.playerPlaceDisc(row: cell.row, col: cell.col)
+                }
             }
             .ignoresSafeArea()
 
