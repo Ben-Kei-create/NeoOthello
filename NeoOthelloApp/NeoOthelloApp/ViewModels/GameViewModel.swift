@@ -1,54 +1,230 @@
-import Foundation
-import Combine
+import SwiftUI
+import SceneKit
 
-/// Main ViewModel bridging game logic and SwiftUI/SceneKit views.
+// @MainActor: UI更新をメインスレッドでやる保証
 @MainActor
-final class GameViewModel: ObservableObject {
+class GameViewModel: ObservableObject {
+    // --- モデル ---
+    @Published var board = Board()
+    @Published var currentTurn: DiscColor = .black
 
-    // MARK: - Published State
+    // --- ローグライク要素 ---
+    @Published var deck = Deck()
+    @Published var playerHand = Hand()
+    @Published var enemyHand = Hand() // AI用（データとしては持っておく）
 
-    @Published var board: Board = Board()
-    @Published var gameMode: GameMode = .classic
-    @Published var currentPlayer: DiscColor = .black
-    @Published var currentPhase: TurnPhase = .startTurn
-    @Published var blackHand: Hand = Hand(ownerColor: .black)
-    @Published var whiteHand: Hand = Hand(ownerColor: .white)
-    @Published var deck: Deck = Deck()
-    @Published var selectedDiscIndex: Int? = nil
-    @Published var selectedDisc: Disc? = nil
-    @Published var message: String = ""
+    // --- 状態管理 ---
+    @Published var selectedDiscIndex: Int? = nil // 手牌のどれを選んでる？(0~4)
+    @Published var message: String = "Select a disc..."
     @Published var isGameOver: Bool = false
     @Published var winner: DiscColor = .none
     @Published var blackCount: Int = 2
     @Published var whiteCount: Int = 2
-    @Published var isWaitingForPlacement: Bool = false
-    @Published var isWaitingForHandSelection: Bool = false
-    @Published var validMovePositions: [(x: Int, y: Int)] = []
-    @Published var lastPlacedPosition: (x: Int, y: Int)? = nil
-    @Published var bombAffectedCells: [(Int, Int)] = []
-    @Published var hackedForcePosition: (x: Int, y: Int)? = nil
-    @Published var limitBreakTriggered: Bool = false
-    @Published var showingTitleScreen: Bool = true
 
-    // MARK: - Board Helpers
+    // 3Dシーン（Viewから参照させる）
+    let scene = GameScene()
 
-    private func validMoves(for color: DiscColor) -> [(x: Int, y: Int)] {
-        var moves: [(Int, Int)] = []
+    init() {
+        startNewGame()
+    }
+
+    func startNewGame() {
+        board = Board()
+        deck = Deck()
+        playerHand = Hand()
+        enemyHand = Hand()
+        currentTurn = .black
+        selectedDiscIndex = nil
+        isGameOver = false
+        winner = .none
+
+        // 初期手札を配る
+        playerHand.refill(from: &deck, owner: .black)
+        enemyHand.refill(from: &deck, owner: .white)
+
+        // 3D盤面リセット
+        renderBoard()
+        updateCounts()
+        message = "Select a disc from your hand"
+    }
+
+    // 手牌を選択したときの処理
+    func selectDisc(at index: Int) {
+        // 自分の番じゃないと選べない
+        guard currentTurn == .black else { return }
+        guard index >= 0 && index < playerHand.discs.count else { return }
+
+        selectedDiscIndex = index
+        let disc = playerHand.discs[index]
+
+        // 石の種類によってメッセージを変える
+        switch disc.type {
+        case .normal: message = "Normal Disc selected"
+        case .bomb:   message = "BOMB! Destroys surroundings"
+        case .hacked: message = "HACKED... AI controls this move"
+        }
+
+        // 選択フィードバック
+        let generator = UISelectionFeedbackGenerator()
+        generator.selectionChanged()
+    }
+
+    // 盤面をタップしたときの処理
+    func handleBoardTap(x: Int, y: Int) {
+        // 1. 自分のターンか？
+        guard currentTurn == .black else { return }
+
+        // 2. 手牌を選んでいるか？
+        guard let index = selectedDiscIndex, index < playerHand.discs.count else {
+            message = "Select a disc first!"
+            notifyError()
+            return
+        }
+
+        // 3. 置ける場所か？
+        guard board.canPlace(currentTurn, at: x, y) else {
+            message = "Invalid Move!"
+            notifyError()
+            return
+        }
+
+        // --- 実行フェーズ ---
+
+        // 手牌から石を消費
+        guard let _ = playerHand.useDisc(at: index) else { return }
+        selectedDiscIndex = nil // 選択解除
+
+        executeMove(color: currentTurn, x: x, y: y)
+    }
+
+    // 石を置いてひっくり返す共通処理
+    private func executeMove(color: DiscColor, x: Int, y: Int) {
+        if let flipped = board.place(color, at: x, y) {
+
+            // 3D更新（置く）
+            scene.placeDisc(at: x, y, color: color.uiColor)
+            let impact = UIImpactFeedbackGenerator(style: .medium)
+            impact.impactOccurred()
+
+            // ひっくり返す演出（非同期）
+            Task {
+                try? await Task.sleep(nanoseconds: 150_000_000) // 0.15秒待つ
+                for (fx, fy) in flipped {
+                    scene.flipDisc(at: fx, fy, to: color.uiColor)
+                }
+
+                // スコア更新
+                updateCounts()
+
+                // ターン終了処理へ
+                endTurn()
+            }
+        }
+    }
+
+    private func endTurn() {
+        // ゲーム終了チェック
+        let blackMoves = hasValidMoves(for: .black)
+        let whiteMoves = hasValidMoves(for: .white)
+
+        if !blackMoves && !whiteMoves {
+            finishGame()
+            return
+        }
+
+        currentTurn = currentTurn.opponent
+
+        if currentTurn == .white {
+            message = "AI Thinking..."
+            // --- AIターン ---
+            Task {
+                try? await Task.sleep(nanoseconds: 1_000_000_000) // 1秒考えるフリ
+
+                // 敵も手札補充
+                enemyHand.refill(from: &deck, owner: .white)
+
+                // 合法手チェック
+                if !hasValidMoves(for: .white) {
+                    // 置く場所がない（パス）
+                    currentTurn = .black
+                    playerHand.refill(from: &deck, owner: .black)
+                    message = "AI Passed. Your Turn."
+                    return
+                }
+
+                // ランダムに置ける場所を探して置く（仮AI）
+                var validMoves: [(Int, Int)] = []
+                for x in 0..<8 {
+                    for y in 0..<8 {
+                        if board.canPlace(.white, at: x, y) {
+                            validMoves.append((x, y))
+                        }
+                    }
+                }
+
+                if let move = validMoves.randomElement() {
+                    // AI手牌を消費（中身は問わない）
+                    let _ = enemyHand.useDisc(at: 0)
+                    executeMove(color: .white, x: move.0, y: move.1)
+                }
+            }
+        } else {
+            // プレイヤーのターンに戻ってきた
+            if !hasValidMoves(for: .black) {
+                // プレイヤーもパス
+                message = "No valid moves. Turn skipped."
+                Task {
+                    try? await Task.sleep(nanoseconds: 800_000_000)
+                    endTurn()
+                }
+                return
+            }
+            playerHand.refill(from: &deck, owner: .black) // 手札補充
+            message = "Your Turn. Select a disc."
+        }
+    }
+
+    private func finishGame() {
+        isGameOver = true
+        updateCounts()
+
+        if blackCount > whiteCount {
+            winner = .black
+            message = "You Win! Black \(blackCount) - White \(whiteCount)"
+        } else if whiteCount > blackCount {
+            winner = .white
+            message = "AI Wins! Black \(blackCount) - White \(whiteCount)"
+        } else {
+            winner = .none
+            message = "Draw! Black \(blackCount) - White \(whiteCount)"
+        }
+    }
+
+    // 3D盤面再描画（リセット用）
+    func renderBoard() {
+        scene.resetBoard()
+        // 初期配置を描画
         for x in 0..<8 {
             for y in 0..<8 {
-                if board.canPlace(color, at: x, y) {
-                    moves.append((x, y))
+                if let disc = board.grid[x][y] {
+                    scene.placeDisc(at: x, y, color: disc.color.uiColor)
                 }
             }
         }
-        return moves
     }
 
-    private var isGameOverCheck: Bool {
-        validMoves(for: .black).isEmpty && validMoves(for: .white).isEmpty
+    // MARK: - Helpers
+
+    private func hasValidMoves(for color: DiscColor) -> Bool {
+        for x in 0..<8 {
+            for y in 0..<8 {
+                if board.canPlace(color, at: x, y) { return true }
+            }
+        }
+        return false
     }
 
-    private func countDiscs() -> (black: Int, white: Int) {
+    private func updateCounts() {
         var b = 0, w = 0
         for x in 0..<8 {
             for y in 0..<8 {
@@ -61,352 +237,12 @@ final class GameViewModel: ObservableObject {
                 }
             }
         }
-        return (b, w)
+        blackCount = b
+        whiteCount = w
     }
 
-    // MARK: - Init & Start
-
-    func startGame(mode: GameMode) {
-        gameMode = mode
-        board = Board() // Board() already sets up initial state
-        currentPlayer = .black
-        isGameOver = false
-        winner = .none
-        message = ""
-        selectedDisc = nil
-        selectedDiscIndex = nil
-        lastPlacedPosition = nil
-        bombAffectedCells = []
-        hackedForcePosition = nil
-        limitBreakTriggered = false
-        showingTitleScreen = false
-
-        blackHand = Hand(ownerColor: .black)
-        whiteHand = Hand(ownerColor: .white)
-        deck = Deck()
-
-        if mode == .rogue {
-            deck.build()
-        }
-
-        updateCounts()
-        beginTurn()
-    }
-
-    // MARK: - Turn Flow
-
-    private func beginTurn() {
-        guard !isGameOver else { return }
-
-        let moves = validMoves(for: currentPlayer)
-        if moves.isEmpty {
-            let opponentMoves = validMoves(for: currentPlayer.opponent)
-            if opponentMoves.isEmpty {
-                endGame()
-                return
-            }
-            // Skip turn
-            message = "\(currentPlayer.displayName) has no valid moves. Turn skipped."
-            Task {
-                try? await Task.sleep(nanoseconds: 800_000_000)
-                switchPlayer()
-                beginTurn()
-            }
-            return
-        }
-
-        currentPhase = .startTurn
-        message = "\(currentPlayer.displayName)'s turn"
-
-        if gameMode == .rogue {
-            drawPhase()
-        } else {
-            selectedDisc = Disc(color: currentPlayer, type: .normal)
-            enterPlacePhase()
-        }
-    }
-
-    // MARK: - Draw Phase (Rogue)
-
-    private func drawPhase() {
-        currentPhase = .draw
-
-        var hand = currentHand
-        while !hand.isFull && !deck.isEmpty {
-            if let drawn = deck.draw(for: currentPlayer) {
-                hand.add(drawn)
-            }
-        }
-        setCurrentHand(hand)
-
-        enterSelectHandPhase()
-    }
-
-    // MARK: - Select Hand Phase (Rogue)
-
-    private func enterSelectHandPhase() {
-        currentPhase = .selectHand
-
-        let hand = currentHand
-        if hand.count == 0 {
-            selectedDisc = Disc(color: currentPlayer, type: .normal)
-            enterPlacePhase()
-            return
-        }
-
-        if currentPlayer == .black {
-            // Human: wait for tap on hand slot
-            isWaitingForHandSelection = true
-        } else {
-            // AI: auto-select
-            let idx = GameEngine.chooseHandDisc(hand: hand)
-            aiSelectHandDisc(index: idx)
-        }
-    }
-
-    /// Called when player taps a hand slot.
-    func playerSelectHandDisc(index: Int) {
-        guard isWaitingForHandSelection, currentPhase == .selectHand else { return }
-
-        var hand = currentHand
-        guard let disc = hand.remove(at: index) else { return }
-        setCurrentHand(hand)
-        selectedDisc = disc
-        selectedDiscIndex = index
-        isWaitingForHandSelection = false
-
-        enterPlacePhase()
-    }
-
-    private func aiSelectHandDisc(index: Int) {
-        Task {
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            var hand = currentHand
-            guard let disc = hand.remove(at: index) else { return }
-            setCurrentHand(hand)
-            selectedDisc = disc
-            selectedDiscIndex = index
-
-            enterPlacePhase()
-        }
-    }
-
-    // MARK: - Place Phase
-
-    private func enterPlacePhase() {
-        currentPhase = .place
-        validMovePositions = validMoves(for: currentPlayer)
-
-        let isHacked = selectedDisc?.type == .hacked
-
-        if isHacked {
-            handleHackedPlacement()
-        } else if currentPlayer == .black {
-            isWaitingForPlacement = true
-        } else {
-            aiPlace()
-        }
-    }
-
-    /// Called when player taps a board cell.
-    func playerPlaceDisc(x: Int, y: Int) {
-        guard isWaitingForPlacement, currentPhase == .place else { return }
-        guard board.canPlace(currentPlayer, at: x, y) else { return }
-
-        let flipped = board.place(currentPlayer, at: x, y)
-        lastPlacedPosition = (x, y)
-        isWaitingForPlacement = false
-        validMovePositions = []
-
-        updateCounts()
-
-        if gameMode == .rogue {
-            checkLimitBreak(flippedCount: flipped?.count ?? 0)
-        }
-
-        afterPlacement(x: x, y: y)
-    }
-
-    private func aiPlace() {
-        Task {
-            try? await Task.sleep(nanoseconds: 500_000_000)
-
-            guard let move = GameEngine.chooseBestMove(board: board, color: currentPlayer) else {
-                endTurn()
-                return
-            }
-
-            let flipped = board.place(currentPlayer, at: move.x, move.y)
-            lastPlacedPosition = (move.x, move.y)
-            validMovePositions = []
-            updateCounts()
-
-            if gameMode == .rogue {
-                checkLimitBreak(flippedCount: flipped?.count ?? 0)
-            }
-
-            afterPlacement(x: move.x, y: move.y)
-        }
-    }
-
-    private func handleHackedPlacement() {
-        message = "HACKED! Opponent controls placement!"
-
-        Task {
-            try? await Task.sleep(nanoseconds: 500_000_000)
-
-            let move: (x: Int, y: Int)?
-
-            if currentPlayer == .black {
-                move = GameEngine.chooseWorstMoveFor(board: board, victimColor: .black)
-            } else {
-                move = GameEngine.chooseRandomMove(board: board, color: .white)
-            }
-
-            guard let m = move else {
-                endTurn()
-                return
-            }
-
-            let flipped = board.place(currentPlayer, at: m.x, m.y)
-            lastPlacedPosition = (m.x, m.y)
-            hackedForcePosition = (m.x, m.y)
-            validMovePositions = []
-            updateCounts()
-
-            message = "Forced placement at (\(m.x), \(m.y))!"
-
-            afterPlacement(x: m.x, y: m.y)
-        }
-    }
-
-    // MARK: - Effect Phase
-
-    private func afterPlacement(x: Int, y: Int) {
-        if gameMode == .rogue, let disc = selectedDisc, disc.type == .bomb {
-            effectPhase(x: x, y: y)
-        } else {
-            endTurn()
-        }
-    }
-
-    private func effectPhase(x: Int, y: Int) {
-        currentPhase = .effect
-
-        Task {
-            try? await Task.sleep(nanoseconds: 300_000_000)
-
-            let affected = GameEngine.resolveBomb(board: &board, x: x, y: y,
-                                                  placerColor: currentPlayer)
-            if !affected.isEmpty {
-                bombAffectedCells = affected
-                message = "BOMB! Destroyed \(affected.count) enemy disc(s)!"
-                updateCounts()
-            }
-
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            bombAffectedCells = []
-
-            endTurn()
-        }
-    }
-
-    // MARK: - Limit Break
-
-    private func checkLimitBreak(flippedCount: Int) {
-        var hand = currentHand
-        if hand.checkLimitBreak(flippedCount: flippedCount) {
-            if hand.tryExpandCapacity() {
-                limitBreakTriggered = true
-                message = "LIMIT BREAK! Hand capacity → \(hand.capacity)!"
-
-                // Bonus draw
-                if !deck.isEmpty {
-                    if let bonus = deck.draw(for: currentPlayer) {
-                        hand.add(bonus)
-                    }
-                }
-
-                setCurrentHand(hand)
-
-                // Reset after a delay
-                Task {
-                    try? await Task.sleep(nanoseconds: 1_500_000_000)
-                    limitBreakTriggered = false
-                }
-            }
-        }
-    }
-
-    // MARK: - End Turn
-
-    private func endTurn() {
-        currentPhase = .endTurn
-        selectedDisc = nil
-        selectedDiscIndex = nil
-        hackedForcePosition = nil
-
-        if isGameOverCheck || (gameMode == .rogue && deck.isEmpty
-            && blackHand.count == 0 && whiteHand.count == 0
-            && validMoves(for: currentPlayer.opponent).isEmpty) {
-            endGame()
-            return
-        }
-
-        switchPlayer()
-
-        Task {
-            try? await Task.sleep(nanoseconds: 200_000_000)
-            beginTurn()
-        }
-    }
-
-    // MARK: - Game Over
-
-    private func endGame() {
-        isGameOver = true
-        let counts = countDiscs()
-        blackCount = counts.black
-        whiteCount = counts.white
-
-        if counts.black > counts.white {
-            winner = .black
-            message = "You Win! Black \(counts.black) - White \(counts.white)"
-        } else if counts.white > counts.black {
-            winner = .white
-            message = "AI Wins! Black \(counts.black) - White \(counts.white)"
-        } else {
-            winner = .none
-            message = "Draw! Black \(counts.black) - White \(counts.white)"
-        }
-    }
-
-    // MARK: - Helpers
-
-    private var currentHand: Hand {
-        currentPlayer == .black ? blackHand : whiteHand
-    }
-
-    private func setCurrentHand(_ hand: Hand) {
-        if currentPlayer == .black {
-            blackHand = hand
-        } else {
-            whiteHand = hand
-        }
-    }
-
-    private func switchPlayer() {
-        currentPlayer = currentPlayer.opponent
-    }
-
-    private func updateCounts() {
-        let counts = countDiscs()
-        blackCount = counts.black
-        whiteCount = counts.white
-    }
-
-    func returnToTitle() {
-        showingTitleScreen = true
-        isGameOver = false
+    private func notifyError() {
+        let generator = UINotificationFeedbackGenerator()
+        generator.notificationOccurred(.error)
     }
 }

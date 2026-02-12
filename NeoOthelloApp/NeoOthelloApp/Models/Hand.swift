@@ -1,54 +1,35 @@
 import Foundation
 
-/// Manages a player's hand with dynamic capacity (Limit Break).
-/// Used in Rogue mode only.
 struct Hand {
-    static let initialCapacity = 3
-    static let maxCapacity = 5
-    static let limitBreakThreshold = 6
+    var discs: [Disc] = []
+    var capacity: Int = 3 // 初期上限は3枚
 
-    private(set) var discs: [Disc] = []
-    private(set) var capacity: Int = Hand.initialCapacity
-    let ownerColor: DiscColor
-
-    init(ownerColor: DiscColor) {
-        self.ownerColor = ownerColor
+    // 補充が必要か？
+    var needsRefill: Bool {
+        return discs.count < capacity
     }
 
-    var count: Int { discs.count }
-    var isFull: Bool { discs.count >= capacity }
-    var slotsAvailable: Int { capacity - discs.count }
-
-    mutating func add(_ disc: Disc) {
-        guard discs.count < capacity else { return }
-        discs.append(disc)
+    // デッキから満タンになるまで補充
+    mutating func refill(from deck: inout Deck, owner: DiscColor) {
+        while discs.count < capacity {
+            if let newDisc = deck.draw(for: owner) {
+                discs.append(newDisc)
+            } else {
+                break // デッキ切れ
+            }
+        }
     }
 
-    @discardableResult
-    mutating func remove(at index: Int) -> Disc? {
+    // 石を使う（選択したインデックスの石を消費して返す）
+    mutating func useDisc(at index: Int) -> Disc? {
         guard index >= 0 && index < discs.count else { return nil }
         return discs.remove(at: index)
     }
 
-    func disc(at index: Int) -> Disc? {
-        guard index >= 0 && index < discs.count else { return nil }
-        return discs[index]
-    }
-
-    /// Attempt to expand capacity. Returns true if expanded.
-    @discardableResult
-    mutating func tryExpandCapacity() -> Bool {
-        guard capacity < Hand.maxCapacity else { return false }
-        capacity += 1
-        return true
-    }
-
-    func checkLimitBreak(flippedCount: Int) -> Bool {
-        flippedCount >= Hand.limitBreakThreshold
-    }
-
-    mutating func clear() {
-        discs.removeAll()
-        capacity = Hand.initialCapacity
+    // 限界突破（6枚返しなどで枠が増える機能用）
+    mutating func limitBreak() {
+        if capacity < 5 { // 最大5枚まで
+            capacity += 1
+        }
     }
 }

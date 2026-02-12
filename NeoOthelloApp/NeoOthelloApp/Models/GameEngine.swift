@@ -77,8 +77,8 @@ struct GameEngine {
         var bestIdx = 0
         var bestPriority = -1
 
-        for i in 0..<hand.count {
-            guard let disc = hand.disc(at: i) else { continue }
+        for i in 0..<hand.discs.count {
+            let disc = hand.discs[i]
             let priority: Int
             switch disc.type {
             case .normal: priority = 10

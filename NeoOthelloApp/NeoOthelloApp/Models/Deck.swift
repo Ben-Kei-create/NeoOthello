@@ -1,37 +1,39 @@
 import Foundation
 
-/// Shared deck (山札). All discs start neutral; colored on draw.
-/// Used in Rogue mode only.
 struct Deck {
-    private(set) var cards: [Disc] = []
+    private var drawPile: [DiscType] = []
 
-    var remainingCount: Int { cards.count }
-    var isEmpty: Bool { cards.isEmpty }
-
-    /// Build deck with given composition. All discs are neutral.
-    mutating func build(normalCount: Int = 40,
-                        hackedCount: Int = 8,
-                        bombCount: Int = 6) {
-        cards.removeAll()
-        cards += (0..<normalCount).map { _ in Disc(color: .none, type: .normal) }
-        cards += (0..<hackedCount).map { _ in Disc(color: .none, type: .hacked) }
-        cards += (0..<bombCount).map { _ in Disc(color: .none, type: .bomb) }
-        shuffle()
+    // 初期化：デッキレシピでシャッフル
+    init() {
+        reset()
     }
 
-    mutating func shuffle() {
-        cards.shuffle()
+    mutating func reset() {
+        drawPile = []
+
+        // --- デッキレシピ ---
+        // 通常石: 20枚
+        for _ in 0..<20 { drawPile.append(.normal) }
+        // ボム: 5枚
+        for _ in 0..<5 { drawPile.append(.bomb) }
+        // ハッキング: 5枚
+        for _ in 0..<5 { drawPile.append(.hacked) }
+
+        drawPile.shuffle()
     }
 
-    /// Draw the top card and dye it to the player's color.
-    mutating func draw(for playerColor: DiscColor) -> Disc? {
-        guard !cards.isEmpty else { return nil }
-        var disc = cards.removeFirst()
-        disc.color = playerColor
-        return disc
+    // ドロー機能
+    // 引く人の色(owner)を指定することで、その石が「誰のものか」確定する
+    mutating func draw(for owner: DiscColor) -> Disc? {
+        guard !drawPile.isEmpty else { return nil } // 山札切れ
+
+        let type = drawPile.removeFirst()
+        // ここで「無色」だった石に「色」がつきます！
+        return Disc(color: owner, type: type)
     }
 
-    func peek() -> Disc? {
-        cards.first
+    // 残り枚数（UI表示用）
+    var count: Int {
+        return drawPile.count
     }
 }

@@ -1,22 +1,6 @@
 import Foundation
 import SwiftUI // Color用にインポート
 
-// MARK: - Game Enums
-
-enum GameMode: String, CaseIterable {
-    case classic = "Classic"
-    case rogue = "Rogue"
-}
-
-enum TurnPhase {
-    case startTurn
-    case draw
-    case selectHand
-    case place
-    case effect
-    case endTurn
-}
-
 // MARK: - Disc Color
 
 enum DiscColor: Int {

@@ -18,15 +18,19 @@ struct GameOverlayView: View {
                 messageBanner
             }
 
-            // Rogue mode: deck info + hand slots
-            if viewModel.gameMode == .rogue {
-                deckInfoBar
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 4)
+            // Deck info
+            deckInfoBar
+                .padding(.horizontal, 16)
+                .padding(.bottom, 4)
 
-                handView
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 16)
+            // Hand slots（常に表示）
+            handView
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
+
+            // Game Over overlay
+            if viewModel.isGameOver {
+                gameOverOverlay
             }
         }
     }
@@ -77,11 +81,11 @@ struct GameOverlayView: View {
         if viewModel.isGameOver {
             return "GAME OVER"
         }
-        return viewModel.currentPlayer == .black ? "YOUR TURN" : "AI THINKING..."
+        return viewModel.currentTurn == .black ? "YOUR TURN" : "AI THINKING..."
     }
 
     private var turnColor: Color {
-        viewModel.currentPlayer == .black ? .green : .orange
+        viewModel.currentTurn == .black ? .green : .orange
     }
 
     // MARK: - Message Banner
@@ -102,8 +106,6 @@ struct GameOverlayView: View {
     }
 
     private var bannerColor: Color {
-        if viewModel.limitBreakTriggered { return .purple }
-        if viewModel.hackedForcePosition != nil { return .red }
         if viewModel.isGameOver {
             return viewModel.winner == .black ? .green : .red
         }
@@ -114,13 +116,13 @@ struct GameOverlayView: View {
 
     private var deckInfoBar: some View {
         HStack {
-            Label("\(viewModel.deck.remainingCount)", systemImage: "square.stack.3d.up")
+            Label("\(viewModel.deck.count)", systemImage: "square.stack.3d.up")
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundColor(.white.opacity(0.8))
 
             Spacer()
 
-            Text("Hand: \(viewModel.blackHand.count)/\(viewModel.blackHand.capacity)")
+            Text("Hand: \(viewModel.playerHand.discs.count)/\(viewModel.playerHand.capacity)")
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundColor(.white.opacity(0.8))
         }
@@ -130,7 +132,7 @@ struct GameOverlayView: View {
 
     private var handView: some View {
         HStack(spacing: 8) {
-            ForEach(0..<Hand.maxCapacity, id: \.self) { index in
+            ForEach(0..<viewModel.playerHand.capacity, id: \.self) { index in
                 handSlot(index: index)
             }
         }
@@ -138,76 +140,45 @@ struct GameOverlayView: View {
 
     @ViewBuilder
     private func handSlot(index: Int) -> some View {
-        let hand = viewModel.blackHand
-
-        if index >= hand.capacity {
-            // Locked slot
-            lockedSlotView
-        } else if index < hand.count, let disc = hand.disc(at: index) {
+        if index < viewModel.playerHand.discs.count {
             // Disc in slot
-            discSlotView(disc: disc, index: index)
-        } else {
-            // Empty unlocked slot
-            emptySlotView
-        }
-    }
+            let disc = viewModel.playerHand.discs[index]
+            let isSelected = viewModel.selectedDiscIndex == index
 
-    private var lockedSlotView: some View {
-        RoundedRectangle(cornerRadius: 8)
-            .fill(Color.gray.opacity(0.15))
-            .frame(height: 60)
-            .overlay(
-                Image(systemName: "lock.fill")
-                    .foregroundColor(.gray.opacity(0.3))
-                    .font(.system(size: 16))
-            )
-            .overlay(
+            Button(action: {
+                viewModel.selectDisc(at: index)
+            }) {
                 RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.gray.opacity(0.2), lineWidth: 1)
-            )
-    }
-
-    private func discSlotView(disc: Disc, index: Int) -> some View {
-        let isSelectable = viewModel.isWaitingForHandSelection
-            && viewModel.currentPhase == .selectHand
-
-        return Button(action: {
-            if isSelectable {
-                viewModel.playerSelectHandDisc(index: index)
+                    .fill(discSlotColor(type: disc.type))
+                    .frame(height: 60)
+                    .overlay(
+                        VStack(spacing: 2) {
+                            discIcon(type: disc.type)
+                                .font(.system(size: 20))
+                            Text(disc.type.label)
+                                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        }
+                        .foregroundColor(.white)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(isSelected ? Color.yellow : Color.white.opacity(0.3),
+                                    lineWidth: isSelected ? 3 : 1)
+                    )
+                    .scaleEffect(isSelected ? 1.08 : 1.0)
+                    .animation(.easeInOut(duration: 0.2), value: isSelected)
             }
-        }) {
+            .disabled(viewModel.currentTurn != .black)
+        } else {
+            // Empty slot
             RoundedRectangle(cornerRadius: 8)
-                .fill(discSlotColor(type: disc.type))
+                .fill(Color.white.opacity(0.05))
                 .frame(height: 60)
                 .overlay(
-                    VStack(spacing: 2) {
-                        discIcon(type: disc.type)
-                            .font(.system(size: 20))
-                        Text(disc.type.label)
-                            .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    }
-                    .foregroundColor(.white)
-                )
-                .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(isSelectable ? Color.yellow : Color.white.opacity(0.3),
-                                lineWidth: isSelectable ? 2 : 1)
+                        .stroke(Color.white.opacity(0.15), lineWidth: 1)
                 )
-                .scaleEffect(isSelectable ? 1.05 : 1.0)
-                .animation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true),
-                           value: isSelectable)
         }
-        .disabled(!isSelectable)
-    }
-
-    private var emptySlotView: some View {
-        RoundedRectangle(cornerRadius: 8)
-            .fill(Color.white.opacity(0.05))
-            .frame(height: 60)
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.white.opacity(0.15), lineWidth: 1)
-            )
     }
 
     private func discSlotColor(type: DiscType) -> Color {
@@ -225,43 +196,30 @@ struct GameOverlayView: View {
         case .bomb: return Image(systemName: "flame.fill")
         }
     }
-}
 
-// MARK: - Game Over Overlay
+    // MARK: - Game Over
 
-struct GameOverOverlay: View {
-    @ObservedObject var viewModel: GameViewModel
+    private var gameOverOverlay: some View {
+        VStack(spacing: 20) {
+            Text(resultTitle)
+                .font(.system(size: 32, weight: .black, design: .monospaced))
+                .foregroundColor(resultColor)
 
-    var body: some View {
-        if viewModel.isGameOver {
-            VStack(spacing: 20) {
-                Text(resultTitle)
-                    .font(.system(size: 32, weight: .black, design: .monospaced))
-                    .foregroundColor(resultColor)
+            Text("Black \(viewModel.blackCount) - White \(viewModel.whiteCount)")
+                .font(.system(size: 18, weight: .medium, design: .monospaced))
+                .foregroundColor(.white)
 
-                Text("Black \(viewModel.blackCount) - White \(viewModel.whiteCount)")
-                    .font(.system(size: 18, weight: .medium, design: .monospaced))
-                    .foregroundColor(.white)
-
-                HStack(spacing: 16) {
-                    Button("Restart") {
-                        viewModel.startGame(mode: viewModel.gameMode)
-                    }
-                    .buttonStyle(GameButtonStyle(color: .green))
-
-                    Button("Title") {
-                        viewModel.returnToTitle()
-                    }
-                    .buttonStyle(GameButtonStyle(color: .blue))
-                }
+            Button("Restart") {
+                viewModel.startNewGame()
             }
-            .padding(32)
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.black.opacity(0.85))
-            )
-            .transition(.scale.combined(with: .opacity))
+            .buttonStyle(GameButtonStyle(color: .green))
         }
+        .padding(32)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.black.opacity(0.85))
+        )
+        .transition(.scale.combined(with: .opacity))
     }
 
     private var resultTitle: String {
