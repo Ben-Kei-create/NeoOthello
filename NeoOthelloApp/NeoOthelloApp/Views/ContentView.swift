@@ -1,55 +1,42 @@
 import SwiftUI
+import SceneKit
 
-/// Root view: switches between TitleScreen and Game view.
 struct ContentView: View {
-    @StateObject private var viewModel = GameViewModel()
-    @State private var gameScene = GameScene()
+    // 3Dシーンを保持（再生成を防ぐためStateObjectか定数で）
+    let scene = GameScene()
 
     var body: some View {
         ZStack {
-            if viewModel.showingTitleScreen {
-                TitleScreenView(viewModel: viewModel)
-                    .transition(.opacity)
-            } else {
-                gameView
-                    .transition(.opacity)
-            }
-        }
-        .animation(.easeInOut(duration: 0.3), value: viewModel.showingTitleScreen)
-        .preferredColorScheme(.dark)
-        .statusBarHidden()
-    }
+            // 3Dレイヤー
+            SceneKitContainer(scene: scene) { nodeName in
+                // タップされたノード名を受け取る
+                print("Tapped Node: \(nodeName)")
 
-    private var gameView: some View {
-        ZStack {
-            // 3D board (SceneKit)
-            SceneKitContainer(scene: gameScene) { nodeName in
-                // ノード名 "cell_3_4" をパースして配置処理へ
-                if let cell = GameScene.parseCellName(nodeName) {
-                    viewModel.playerPlaceDisc(row: cell.row, col: cell.col)
+                // 簡易テスト：タップした場所に黒い石を落としてみる
+                // "cell_3_4" -> [3, 4]
+                let components = nodeName.split(separator: "_")
+                if components.count == 3,
+                   let x = Int(components[1]),
+                   let y = Int(components[2]) {
+
+                    // UIスレッドで描画更新
+                    Task { @MainActor in
+                        scene.placeDisc(at: x, y, color: .black)
+                    }
                 }
             }
-            .ignoresSafeArea()
+            .edgesIgnoringSafeArea(.all)
 
-            // 2D overlay (SwiftUI)
-            GameOverlayView(viewModel: viewModel)
-
-            // Game over panel
-            GameOverOverlay(viewModel: viewModel)
-        }
-        .onChange(of: viewModel.board.cells.flatMap { $0.map { $0.color } }) {
-            gameScene.updateBoard(viewModel.board)
-        }
-        .onChange(of: viewModel.validMovePositions.map { "\($0.row)_\($0.col)" }) {
-            gameScene.updateHighlights(viewModel.validMovePositions)
-        }
-        .onChange(of: viewModel.bombAffectedCells.map { "\($0.0)_\($0.1)" }) {
-            if !viewModel.bombAffectedCells.isEmpty {
-                gameScene.animateBombEffect(positions: viewModel.bombAffectedCells)
+            // UIレイヤー（仮）
+            VStack {
+                Text("Neo Othello Prototype")
+                    .font(.largeTitle)
+                    .foregroundColor(.white)
+                    .padding()
+                    .background(.black.opacity(0.5))
+                    .cornerRadius(10)
+                Spacer()
             }
-        }
-        .onAppear {
-            gameScene.updateBoard(viewModel.board)
         }
     }
 }
