@@ -81,36 +81,79 @@ class GameViewModel: ObservableObject {
             return
         }
 
-        // 3. 置ける場所か？
+        // --- 特殊分岐：ハッキング石 ---
+        let selectedDisc = playerHand.discs[index]
+
+        if selectedDisc.type == .hacked {
+            // プレイヤーが選んだ場所(x, y)は無視される！
+            // AIが勝手に場所を決める
+            if let forcedMove = board.getHackedMove(for: .black) {
+                // 手牌を消費
+                _ = playerHand.useDisc(at: index)
+                selectedDiscIndex = nil
+
+                message = "HACKED! Move hijacked!"
+
+                // 強制的な場所に打つ
+                executeMove(color: .black, x: forcedMove.0, y: forcedMove.1, type: .hacked)
+            } else {
+                message = "No valid moves even for Hacked disc!"
+                notifyError()
+            }
+            return
+        }
+
+        // --- 通常 & ボム ---
+        // プレイヤーが選んだ場所に置けるかチェック
         guard board.canPlace(currentTurn, at: x, y) else {
             message = "Invalid Move!"
             notifyError()
             return
         }
 
-        // --- 実行フェーズ ---
+        // 手牌を消費
+        _ = playerHand.useDisc(at: index)
+        selectedDiscIndex = nil
 
-        // 手牌から石を消費
-        guard let _ = playerHand.useDisc(at: index) else { return }
-        selectedDiscIndex = nil // 選択解除
-
-        executeMove(color: currentTurn, x: x, y: y)
+        // 実行
+        executeMove(color: .black, x: x, y: y, type: selectedDisc.type)
     }
 
-    // 石を置いてひっくり返す共通処理
-    private func executeMove(color: DiscColor, x: Int, y: Int) {
+    // 石を置いてひっくり返す共通処理（タイプに応じた効果付き）
+    private func executeMove(color: DiscColor, x: Int, y: Int, type: DiscType = .normal) {
         if let flipped = board.place(color, at: x, y) {
 
-            // 3D更新（置く）
-            scene.placeDisc(at: x, y, color: color.uiColor)
-            let impact = UIImpactFeedbackGenerator(style: .medium)
+            // 3D更新（タイプに応じた色で！）
+            let displayColor = getDisplayColor(color: color, type: type)
+            scene.placeDisc(at: x, y, color: displayColor)
+
+            let impact = UIImpactFeedbackGenerator(style: .heavy)
             impact.impactOccurred()
 
-            // ひっくり返す演出（非同期）
             Task {
-                try? await Task.sleep(nanoseconds: 150_000_000) // 0.15秒待つ
+                // 1. 通常のひっくり返し
+                try? await Task.sleep(nanoseconds: 150_000_000)
                 for (fx, fy) in flipped {
                     scene.flipDisc(at: fx, fy, to: color.uiColor)
+                }
+
+                // 2. ボム発動！
+                if type == .bomb {
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                    let exploded = board.explode(at: (x, y), color: color)
+
+                    if !exploded.isEmpty {
+                        message = "BOOM! \(exploded.count) discs destroyed!"
+                        let boom = UINotificationFeedbackGenerator()
+                        boom.notificationOccurred(.warning)
+
+                        for (ex, ey) in exploded {
+                            // 爆発エフェクト：赤くしてから自分の色へ
+                            scene.flipDisc(at: ex, ey, to: .red)
+                            try? await Task.sleep(nanoseconds: 100_000_000)
+                            scene.flipDisc(at: ex, ey, to: color.uiColor)
+                        }
+                    }
                 }
 
                 // スコア更新
@@ -119,6 +162,15 @@ class GameViewModel: ObservableObject {
                 // ターン終了処理へ
                 endTurn()
             }
+        }
+    }
+
+    // 3D表示用の色分けヘルパー
+    private func getDisplayColor(color: DiscColor, type: DiscType) -> UIColor {
+        switch type {
+        case .normal: return color.uiColor
+        case .bomb: return .red       // ボムは赤く光る
+        case .hacked: return .purple  // ハッキングは紫
         }
     }
 

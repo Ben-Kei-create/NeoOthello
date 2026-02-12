@@ -79,6 +79,41 @@ struct Board {
         return flippable
     }
 
+    // --- ボム用：周囲8マスの相手の石を自分の色に塗りつぶす ---
+    mutating func explode(at center: (Int, Int), color: DiscColor) -> [(Int, Int)] {
+        var affected: [(Int, Int)] = []
+
+        for dx in -1...1 {
+            for dy in -1...1 {
+                if dx == 0 && dy == 0 { continue } // 自分は除く
+                let nx = center.0 + dx
+                let ny = center.1 + dy
+
+                if isValidCoordinate(nx, ny), let existing = grid[nx][ny] {
+                    // 相手の石があれば、問答無用で自分の色にする
+                    if existing.color != color {
+                        grid[nx][ny]?.color = color
+                        affected.append((nx, ny))
+                    }
+                }
+            }
+        }
+        return affected
+    }
+
+    // --- ハッキング用：ランダムな合法手を返す ---
+    func getHackedMove(for color: DiscColor) -> (Int, Int)? {
+        var validMoves: [(Int, Int)] = []
+        for x in 0..<8 {
+            for y in 0..<8 {
+                if canPlace(color, at: x, y) {
+                    validMoves.append((x, y))
+                }
+            }
+        }
+        return validMoves.randomElement()
+    }
+
     private func isValidCoordinate(_ x: Int, _ y: Int) -> Bool {
         return x >= 0 && x < 8 && y >= 0 && y < 8
     }
