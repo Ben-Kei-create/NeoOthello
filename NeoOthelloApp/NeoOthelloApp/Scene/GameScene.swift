@@ -2,93 +2,122 @@ import SceneKit
 
 class GameScene: SCNScene {
 
-    // 盤面の親ノード（回転やアニメーション用）
+    // 盤面全体を操作するための親ノード
     let boardNode = SCNNode()
 
     override init() {
         super.init()
         setupCamera()
+        setupLights()
         setupBoard()
-        setupLights() // 自動ライティングと併用（演出用）
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
+    // MARK: - Setup
+
     private func setupCamera() {
         let cameraNode = SCNNode()
         cameraNode.camera = SCNCamera()
-        // 盤面全体（8x8）が見渡せる位置
-        // x:3.5, z:3.5 が盤面の中心なので、そこを見下ろす
-        cameraNode.position = SCNVector3(x: 3.5, y: 10, z: 8.5)
-        // 60度くらい見下ろす
-        cameraNode.eulerAngles = SCNVector3(x: -Float.pi / 3, y: 0, z: 0)
+        // 盤面中心(3.5, 3.5)を見下ろす位置
+        cameraNode.position = SCNVector3(x: 3.5, y: 10, z: 9.0)
+        // 60度くらいの角度で見下ろす
+        cameraNode.eulerAngles = SCNVector3(x: -Float.pi / 2.8, y: 0, z: 0)
         rootNode.addChildNode(cameraNode)
     }
 
     private func setupLights() {
-        // 雰囲気を出すための環境光
+        // 全体を照らす環境光（暗くなりすぎないように）
         let ambientLight = SCNNode()
         ambientLight.light = SCNLight()
         ambientLight.light?.type = .ambient
-        ambientLight.light?.color = UIColor(white: 0.3, alpha: 1.0)
+        ambientLight.light?.intensity = 800
+        ambientLight.light?.color = UIColor(white: 0.8, alpha: 1.0)
         rootNode.addChildNode(ambientLight)
+
+        // 影を落とすための指向性ライト（右上から）
+        let directionalLight = SCNNode()
+        directionalLight.light = SCNLight()
+        directionalLight.light?.type = .directional
+        directionalLight.light?.intensity = 1000
+        directionalLight.light?.castsShadow = true // 影を有効化
+        directionalLight.position = SCNVector3(x: 5, y: 10, z: 5)
+        directionalLight.eulerAngles = SCNVector3(x: -Float.pi / 3, y: -Float.pi / 4, z: 0)
+        rootNode.addChildNode(directionalLight)
     }
 
     private func setupBoard() {
         rootNode.addChildNode(boardNode)
 
         let cellSize: CGFloat = 1.0
-        let spacing: CGFloat = 0.05 // セル間の隙間（メカニカルな感じが出る）
+        let spacing: CGFloat = 0.05 // 【こだわり】この隙間がメカニカル感を出す
 
         for x in 0..<8 {
             for y in 0..<8 {
-                // セルのジオメトリ（ローポリなのでchamferRadiusは0）
+                // ローポリ＝角ばった直方体 (chamferRadius: 0)
                 let box = SCNBox(width: cellSize - spacing,
                                  height: 0.2,
                                  length: cellSize - spacing,
                                  chamferRadius: 0.0)
 
-                // マテリアル（オセロっぽい緑）
+                // PBRマテリアル設定（実験装置っぽい金属感）
                 let material = SCNMaterial()
-                material.diffuse.contents = UIColor(red: 0.0, green: 0.6, blue: 0.2, alpha: 1.0)
-                // 少しメタリックにして「機械的な実験装置」感を出す
                 material.lightingModel = .physicallyBased
-                material.metalness.contents = 0.3
-                material.roughness.contents = 0.4
+                material.diffuse.contents = UIColor(red: 0.1, green: 0.6, blue: 0.3, alpha: 1.0) // 深めの緑
+                material.metalness.contents = 0.4 // 金属っぽさ
+                material.roughness.contents = 0.3 // ツルツルしすぎない
                 box.materials = [material]
 
                 let cellNode = SCNNode(geometry: box)
-                // 位置設定（y=0が基準）
                 cellNode.position = SCNVector3(x: Float(x), y: 0, z: Float(y))
 
-                // 【重要】ここがタップ判定のキーになる名前
+                // 【重要】タップ判定用の名前（ID）
                 cellNode.name = "cell_\(x)_\(y)"
 
                 boardNode.addChildNode(cellNode)
             }
         }
+
+        // 土台（床）も少し作っておくとかっこいい
+        let floor = SCNBox(width: 10, height: 0.1, length: 10, chamferRadius: 0)
+        let floorMat = SCNMaterial()
+        floorMat.diffuse.contents = UIColor.darkGray
+        floor.materials = [floorMat]
+        let floorNode = SCNNode(geometry: floor)
+        floorNode.position = SCNVector3(3.5, -0.2, 3.5)
+        rootNode.addChildNode(floorNode)
     }
 
-    // 盤面に石を置く演出（後で使います）
+    // MARK: - Actions
+
+    /// 指定した座標に石を落とすアニメーション
     func placeDisc(at x: Int, _ y: Int, color: UIColor) {
-        let cylinder = SCNCylinder(radius: 0.4, height: 0.2)
+        // 石のジオメトリ
+        let cylinder = SCNCylinder(radius: 0.4, height: 0.15)
         cylinder.radialSegmentCount = 32 // 円柱の滑らかさ
 
         let material = SCNMaterial()
+        material.lightingModel = .physicallyBased
         material.diffuse.contents = color
+        material.specular.contents = UIColor.white // ハイライト
+        material.roughness.contents = 0.1 // ツルツル
         cylinder.materials = [material]
 
         let discNode = SCNNode(geometry: cylinder)
-        discNode.position = SCNVector3(x: Float(x), y: 0.5, z: Float(y)) // y=0.5で上から降ってくる演出用
 
-        // アニメーション：上から「ストン」と落ちる
-        discNode.position.y += 2.0
-        let moveAction = SCNAction.move(to: SCNVector3(Float(x), 0.15, Float(y)), duration: 0.3)
-        moveAction.timingMode = .easeOut
+        // 開始位置：盤面の少し上
+        let targetY: Float = 0.15 + 0.075 // 盤面(0.1) + 石の半分の高さ
+        discNode.position = SCNVector3(x: Float(x), y: 2.0, z: Float(y)) // 高さ2.0から落とす
 
-        discNode.runAction(moveAction)
+        // 落下アクション
+        let fallAction = SCNAction.move(to: SCNVector3(x: Float(x), y: targetY, z: Float(y)), duration: 0.25)
+        fallAction.timingMode = .easeIn // 重力加速っぽく
+
+        // 着地した瞬間の「揺れ」や「音」を入れるならここ
+
+        discNode.runAction(fallAction)
         boardNode.addChildNode(discNode)
     }
 }
